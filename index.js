@@ -36,7 +36,13 @@ const client = new Client({
 // ---------- 슬래시 명령어 로드 ----------
 client.commands = new Collection();
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
+let commandFiles = [];
+if (!fs.existsSync(commandsPath)) {
+  fs.mkdirSync(commandsPath, { recursive: true });
+  logger.log('commands/ directory created (was missing)');
+} else {
+  commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
+}
 
 for (const file of commandFiles) {
   try {
@@ -76,7 +82,13 @@ logger.log(`${client.prefixCommands.size}개의 접두사(!) 명령어를 로드
 
 // ---------- 이벤트 핸들러 로드 ----------
 const eventsPath = path.join(__dirname, 'events');
-const eventFiles = fs.readdirSync(eventsPath).filter((file) => file.endsWith('.js'));
+let eventFiles = [];
+if (!fs.existsSync(eventsPath)) {
+  fs.mkdirSync(eventsPath, { recursive: true });
+  logger.log('events/ directory created (was missing)');
+} else {
+  eventFiles = fs.readdirSync(eventsPath).filter((file) => file.endsWith('.js'));
+}
 
 for (const file of eventFiles) {
   try {
