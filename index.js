@@ -2,11 +2,13 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
+
 const {
   Client,
   GatewayIntentBits,
   Partials,
   Collection,
+  ActivityType
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -23,18 +25,14 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildVoiceStates
   ],
 
   partials: [
     Partials.Channel,
-    Partials.Message,
-  ],
+    Partials.Message
+  ]
 });
-
-/* =========================
-   명령어
-========================= */
 
 client.commands = new Collection();
 client.prefixCommands = new Collection();
@@ -63,7 +61,7 @@ const discordEvents = new Set([
   'error',
   'warn',
   'shardReconnecting',
-  'shardResume',
+  'shardResume'
 ]);
 
 function getRootJsFiles() {
@@ -76,43 +74,60 @@ function getRootJsFiles() {
     );
 }
 
-/* =========================
-   루트 명령어 자동 검색
-========================= */
+/* =====================================
+   명령어 자동 로드
+===================================== */
 
 for (const file of getRootJsFiles()) {
+
   try {
+
     const fullPath = path.join(ROOT, file);
     const mod = require(fullPath);
 
-    // Slash Command
+    /* 슬래시 명령어 */
+
     if (
       mod &&
       mod.data &&
-      typeof mod.execute === 'function'
+      typeof mod.execute === 'function' &&
+      mod.data.name
     ) {
-      const name = mod.data.name;
 
-      if (name) {
-        client.commands.set(name, mod);
-        console.log(`✅ 슬래시 명령어 로드: /${name}`);
-      }
+      client.commands.set(
+        mod.data.name,
+        mod
+      );
+
+      console.log(
+        `✅ 슬래시 명령어 로드: /${mod.data.name}`
+      );
     }
 
-    // Prefix Command
+    /* 접두사 명령어 */
+
     if (
       mod &&
       typeof mod.name === 'string' &&
       typeof mod.execute === 'function' &&
       !discordEvents.has(mod.name)
     ) {
-      client.prefixCommands.set(mod.name, mod);
-      console.log(`✅ 접두사 명령어 로드: !${mod.name}`);
+
+      client.prefixCommands.set(
+        mod.name.toLowerCase(),
+        mod
+      );
+
+      console.log(
+        `✅ 접두사 명령어 로드: !${mod.name}`
+      );
     }
 
-  } catch (err) {
-    console.log(`⚠️ ${file} 로드 건너뜀`);
-    console.log(err.message);
+  } catch (error) {
+
+    console.log(
+      `⚠️ ${file} 로드 실패: ${error.message}`
+    );
   }
 }
 
@@ -124,12 +139,14 @@ console.log(
   `📦 접두사 명령어 ${client.prefixCommands.size}개 로드`
 );
 
-/* =========================
-   기존 이벤트 자동 로드
-========================= */
+/* =====================================
+   이벤트 자동 로드
+===================================== */
 
 for (const file of getRootJsFiles()) {
+
   try {
+
     const fullPath = path.join(ROOT, file);
     const mod = require(fullPath);
 
@@ -145,217 +162,469 @@ for (const file of getRootJsFiles()) {
       continue;
     }
 
-    if (mod.name === 'messageCreate') continue;
-    if (mod.name === 'interactionCreate') continue;
-    if (mod.name === 'ready') continue;
+    /*
+      아래 이벤트는 index.js에서 직접 처리
+    */
+
+    if (
+      mod.name === 'messageCreate' ||
+      mod.name === 'interactionCreate' ||
+      mod.name === 'ready'
+    ) {
+      continue;
+    }
 
     if (mod.once) {
+
       client.once(
         mod.name,
-        (...args) => mod.execute(...args, client)
+        (...args) =>
+          mod.execute(...args, client)
       );
+
     } else {
+
       client.on(
         mod.name,
-        (...args) => mod.execute(...args, client)
+        (...args) =>
+          mod.execute(...args, client)
       );
     }
 
-    console.log(`✅ 이벤트 로드: ${mod.name}`);
+    console.log(
+      `✅ 이벤트 로드: ${mod.name}`
+    );
 
-  } catch (err) {
-    console.log(`⚠️ 이벤트 ${file} 로드 실패: ${err.message}`);
+  } catch (error) {
+
+    console.log(
+      `⚠️ 이벤트 ${file} 로드 실패: ${error.message}`
+    );
   }
 }
 
-/* =========================
+/* =====================================
    READY
-========================= */
+===================================== */
 
-client.once('ready', () => {
+client.once('ready', async () => {
+
   console.log('');
-  console.log('================================');
+  console.log('====================================');
   console.log(`🤖 로그인 완료: ${client.user.tag}`);
+  console.log(`🟢 상태: ONLINE`);
   console.log(`🏠 서버 수: ${client.guilds.cache.size}`);
-  console.log(`⚡ 슬래시 명령어: ${client.commands.size}개`);
-  console.log(`⌨️ 접두사 명령어: ${client.prefixCommands.size}개`);
-  console.log('================================');
-});
+  console.log(
+    `⚡ 슬래시 명령어: ${client.commands.size}개`
+  );
+  console.log(
+    `⌨️ 접두사 명령어: ${client.prefixCommands.size}개`
+  );
+  console.log('====================================');
 
-/* =========================
-   SLASH COMMAND
-========================= */
+  /* ===================================
+     슬래시 명령어 서버 등록
+  =================================== */
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  const command = client.commands.get(
-    interaction.commandName
+  const slashCommands = [
+    ...client.commands.values()
+  ].map(command =>
+    command.data.toJSON()
   );
 
-  if (!command) {
-    return interaction.reply({
-      content: '❌ 등록되지 않은 명령어입니다.',
-      ephemeral: true,
-    });
-  }
+  for (const guild of client.guilds.cache.values()) {
 
-  try {
-    await command.execute(interaction, client);
-  } catch (err) {
-    console.error(
-      `❌ /${interaction.commandName} 오류:`,
-      err
-    );
+    try {
 
-    if (interaction.replied || interaction.deferred) {
-      await interaction.editReply({
-        content: '❌ 명령어 실행 중 오류가 발생했습니다.',
-      }).catch(() => {});
-    } else {
-      await interaction.reply({
-        content: '❌ 명령어 실행 중 오류가 발생했습니다.',
-        ephemeral: true,
-      }).catch(() => {});
+      await guild.commands.set(
+        slashCommands
+      );
+
+      console.log(
+        `✅ 슬래시 명령어 등록: ${guild.name}`
+      );
+
+    } catch (error) {
+
+      console.error(
+        `❌ ${guild.name} 등록 실패:`,
+        error.message
+      );
     }
   }
-});
 
-/* =========================
-   PREFIX COMMAND
-========================= */
+  /* ===================================
+     상태메시지 순환
+  =================================== */
 
-client.on('messageCreate', async message => {
-  if (message.author.bot) return;
+  const statuses = [
+    '패밀리 관리중',
+    '디톤님 도와주는중',
+    '방송중',
+    '듣는중'
+  ];
 
-  const content = message.content.trim();
+  let statusIndex = 0;
 
-  if (!content.startsWith('!')) return;
+  const updateStatus = () => {
 
-  const args = content
-    .slice(1)
-    .trim()
-    .split(/\s+/);
+    if (!client.user) {
+      return;
+    }
 
-  const commandName = args.shift()?.toLowerCase();
-
-  if (!commandName) return;
-
-  const command =
-    client.prefixCommands.get(commandName);
-
-  if (!command) return;
-
-  try {
-    await command.execute(
-      message,
-      args,
-      client
-    );
-  } catch (err) {
-    console.error(
-      `❌ !${commandName} 오류:`,
-      err
-    );
-
-    await message.reply(
-      '❌ 명령어 실행 중 오류가 발생했습니다.'
-    ).catch(() => {});
-  }
-});
-
-/* =========================
-   !봇상태
-========================= */
-
-client.on('messageCreate', async message => {
-  if (message.author.bot) return;
-
-  if (message.content.trim() !== '!봇상태') return;
-
-  const formatUptime = () => {
-    const total = Math.floor(
-      (client.uptime || 0) / 1000
-    );
-
-    const days = Math.floor(total / 86400);
-
-    const hours = Math.floor(
-      (total % 86400) / 3600
-    );
-
-    const minutes = Math.floor(
-      (total % 3600) / 60
-    );
-
-    const seconds = total % 60;
-
-    return `${days}일 ${hours}시간 ${minutes}분 ${seconds}초`;
-  };
-
-  const getStatus = () => {
-    return [
-      `🤖 **현재 봇 상태는 🟢 온라인 입니다.**`,
-      '',
-      `📡 핑: **${client.ws.ping}ms**`,
-      `⏱️ 가동시간: **${formatUptime()}**`,
-      `👥 서버: **${client.guilds.cache.size}개**`,
-      `🔧 슬래시 명령어: **${client.commands.size}개**`,
-      `⌨️ 접두사 명령어: **${client.prefixCommands.size}개**`,
-      `🔄 마지막 확인: <t:${Math.floor(Date.now() / 1000)}:T>`,
-    ].join('\n');
-  };
-
-  try {
-    const msg = await message.reply(
-      getStatus()
-    );
-
-    const timer = setInterval(async () => {
-      try {
-        await msg.edit(getStatus());
-      } catch {
-        clearInterval(timer);
+    client.user.setActivity(
+      statuses[statusIndex],
+      {
+        type: ActivityType.Playing
       }
-    }, 5000);
+    );
 
-    setTimeout(() => {
-      clearInterval(timer);
-    }, 5 * 60 * 1000);
+    statusIndex++;
 
-  } catch (err) {
-    console.error('!봇상태 오류:', err);
-  }
+    if (
+      statusIndex >= statuses.length
+    ) {
+      statusIndex = 0;
+    }
+  };
+
+  updateStatus();
+
+  setInterval(
+    updateStatus,
+    10000
+  );
 });
 
-/* =========================
-   오류 처리
-========================= */
+/* =====================================
+   SLASH COMMAND
+===================================== */
+
+client.on(
+  'interactionCreate',
+  async interaction => {
+
+    if (!interaction.isChatInputCommand()) {
+      return;
+    }
+
+    const command =
+      client.commands.get(
+        interaction.commandName
+      );
+
+    if (!command) {
+
+      return interaction.reply({
+        content:
+          '❌ 등록되지 않은 명령어입니다.',
+        ephemeral: true
+      }).catch(() => {});
+    }
+
+    try {
+
+      await command.execute(
+        interaction,
+        client
+      );
+
+    } catch (error) {
+
+      console.error(
+        `❌ /${interaction.commandName} 오류:`,
+        error
+      );
+
+      const content =
+        '❌ 명령어 실행 중 오류가 발생했습니다.';
+
+      if (
+        interaction.replied ||
+        interaction.deferred
+      ) {
+
+        await interaction
+          .editReply({
+            content
+          })
+          .catch(() => {});
+
+      } else {
+
+        await interaction
+          .reply({
+            content,
+            ephemeral: true
+          })
+          .catch(() => {});
+      }
+    }
+  }
+);
+
+/* =====================================
+   PREFIX COMMAND
+===================================== */
+
+client.on(
+  'messageCreate',
+  async message => {
+
+    if (message.author.bot) {
+      return;
+    }
+
+    const content =
+      message.content.trim();
+
+    if (!content.startsWith('!')) {
+      return;
+    }
+
+    const parts =
+      content
+        .slice(1)
+        .trim()
+        .split(/\s+/);
+
+    const commandName =
+      (parts.shift() || '').toLowerCase();
+
+    if (!commandName) {
+      return;
+    }
+
+    /*
+      봇상태는 아래 전용 처리
+    */
+
+    if (commandName === '봇상태') {
+      return;
+    }
+
+    const command =
+      client.prefixCommands.get(
+        commandName
+      );
+
+    if (!command) {
+      return;
+    }
+
+    try {
+
+      await command.execute(
+        message,
+        parts,
+        client
+      );
+
+    } catch (error) {
+
+      console.error(
+        `❌ !${commandName} 오류:`,
+        error
+      );
+
+      await message
+        .reply(
+          '❌ 명령어 실행 중 오류가 발생했습니다.'
+        )
+        .catch(() => {});
+    }
+  }
+);
+
+/* =====================================
+   !봇상태
+   실시간 온라인 + 서버 정보
+===================================== */
+
+client.on(
+  'messageCreate',
+  async message => {
+
+    if (message.author.bot) {
+      return;
+    }
+
+    if (
+      message.content.trim() !==
+      '!봇상태'
+    ) {
+      return;
+    }
+
+    /*
+      이 코드가 실행됐다는 것 자체가
+      봇이 Discord에 연결되어 있다는 의미
+    */
+
+    const online =
+      client.isReady();
+
+    const status =
+      online
+        ? '🟢 온라인'
+        : '🔴 오프라인';
+
+    /* 서버 정보 */
+
+    const guildCount =
+      client.guilds.cache.size;
+
+    const totalMembers =
+      client.guilds.cache.reduce(
+        (total, guild) =>
+          total + (guild.memberCount || 0),
+        0
+      );
+
+    /* 현재 서버 */
+
+    const currentGuild =
+      message.guild;
+
+    let currentServerInfo =
+      'DM에서 실행됨';
+
+    if (currentGuild) {
+
+      currentServerInfo = [
+        `🏠 서버명: **${currentGuild.name}**`,
+        `🆔 서버 ID: **${currentGuild.id}**`,
+        `👥 서버 인원: **${currentGuild.memberCount}명**`,
+        `📅 서버 생성일: <t:${Math.floor(currentGuild.createdTimestamp / 1000)}:D>`
+      ].join('\n');
+    }
+
+    /* 전체 서버 목록 */
+
+    const guildList =
+      client.guilds.cache
+        .map(
+          guild =>
+            `• **${guild.name}** — ${guild.memberCount}명`
+        )
+        .join('\n');
+
+    /* 가동시간 */
+
+    const uptime =
+      Math.floor(
+        (client.uptime || 0) / 1000
+      );
+
+    const days =
+      Math.floor(
+        uptime / 86400
+      );
+
+    const hours =
+      Math.floor(
+        (uptime % 86400) / 3600
+      );
+
+    const minutes =
+      Math.floor(
+        (uptime % 3600) / 60
+      );
+
+    const seconds =
+      uptime % 60;
+
+    const uptimeText =
+      `${days}일 ${hours}시간 ${minutes}분 ${seconds}초`;
+
+    const text = [
+      '🤖 **디톤 패밀리 관리봇 상태**',
+      '',
+      `📡 봇 상태: **${status}**`,
+      `🏓 Discord Ping: **${client.ws.ping}ms**`,
+      `⏱️ 가동시간: **${uptimeText}**`,
+      '',
+      '📊 **전체 서버 정보**',
+      `🏠 연결된 서버: **${guildCount}개**`,
+      `👥 전체 서버 인원: **${totalMembers}명**`,
+      `⚡ 슬래시 명령어: **${client.commands.size}개**`,
+      `⌨️ 접두사 명령어: **${client.prefixCommands.size}개**`,
+      '',
+      '📌 **현재 서버 정보**',
+      currentServerInfo,
+      '',
+      '🌐 **연결된 서버 목록**',
+      guildList || '연결된 서버가 없습니다.',
+      '',
+      `🕐 확인시간: <t:${Math.floor(Date.now() / 1000)}:F>`
+    ].join('\n');
+
+    await message
+      .reply(text)
+      .catch(() => {});
+  }
+);
+
+/* =====================================
+   Discord 오류
+===================================== */
+
+client.on(
+  'error',
+  error => {
+
+    console.error(
+      '❌ Discord Client Error:',
+      error
+    );
+  }
+);
+
+/* =====================================
+   프로세스 오류
+===================================== */
 
 process.on(
   'unhandledRejection',
-  err => {
-    console.error('❌ Unhandled Rejection:', err);
+  error => {
+
+    console.error(
+      '❌ Unhandled Rejection:',
+      error
+    );
   }
 );
 
 process.on(
   'uncaughtException',
-  err => {
-    console.error('❌ Uncaught Exception:', err);
+  error => {
+
+    console.error(
+      '❌ Uncaught Exception:',
+      error
+    );
   }
 );
 
-client.on('error', err => {
-  console.error('❌ Discord Client Error:', err);
-});
-
-/* =========================
+/* =====================================
    LOGIN
-========================= */
+===================================== */
 
-client.login(TOKEN).catch(err => {
-  console.error('❌ Discord 로그인 실패');
-  console.error(err);
-  process.exit(1);
-});
+client
+  .login(TOKEN)
+  .then(() => {
+
+    console.log(
+      '🔐 Discord 로그인 요청 완료'
+    );
+
+  })
+  .catch(error => {
+
+    console.error(
+      '❌ Discord 로그인 실패:',
+      error
+    );
+
+    process.exit(1);
+  });
