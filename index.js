@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
+const Module = require('module');
 
 const {
   Client,
@@ -11,32 +12,19 @@ const {
   ActivityType,
 } = require('discord.js');
 
-/*
- * ==========================================
- * 디톤 관리봇 - 메인 실행 파일
- * ==========================================
- *
- * 기능
- * - Discord 로그인
- * - 슬래시 명령어 로드
- * - ! 접두사 명령어 로드
- * - messageCreate 이벤트 로드
- * - interactionCreate 이벤트 로드
- * - 음성 관련 이벤트 로드
- * - Railway 실행 로그 출력
- *
- * 기존 일부 파일에서 ../utils/파일명 형태로
- * 불러오는 문제를 호환 처리합니다.
- */
+/* =========================================================
+   디톤 관리봇 - index.js
+   ========================================================= */
 
-// ==========================================
-// utils 경로 호환 처리
-// ==========================================
+const ROOT = __dirname;
 
-const Module = require('module');
+/* =========================================================
+   기존 파일들의 utils 경로 호환
+   ========================================================= */
+
 const originalLoad = Module._load;
 
-const ROOT_UTIL_NAMES = new Set([
+const UTILS = new Set([
   'logger',
   'database',
   'relay',
@@ -50,38 +38,97 @@ const ROOT_UTIL_NAMES = new Set([
 ]);
 
 Module._load = function (request, parent, isMain) {
-  const match = request.match(/(?:\.\.\/|\.\/)?utils\/([^/]+)$/);
-
-  if (match && ROOT_UTIL_NAMES.has(match[1])) {
-    const rootFile = path.join(__dirname, `${match[1]}.js`);
-
-    if (fs.existsSync(rootFile)) {
-      return originalLoad.call(
-        this,
-        rootFile,
-        parent,
-        isMain
-      );
-    }
-  }
-
-  if (
-    request.startsWith('./') &&
-    ROOT_UTIL_NAMES.has(request.slice(2))
-  ) {
-    const rootFile = path.join(
-      __dirname,
-      `${request.slice(2)}.js`
+  try {
+    /*
+     * ../utils/logger
+     * ./utils/logger
+     */
+    const utilsMatch = request.match(
+      /^(?:\.\.\/|\.\/)utils\/([^/]+)$/
     );
 
-    if (fs.existsSync(rootFile)) {
-      return originalLoad.call(
-        this,
-        rootFile,
-        parent,
-        isMain
+    if (utilsMatch && UTILS.has(utilsMatch[1])) {
+      const name = utilsMatch[1];
+
+      const rootFile = path.join(
+        ROOT,
+        `${name}.js`
       );
+
+      const utilsFile = path.join(
+        ROOT,
+        'utils',
+        `${name}.js`
+      );
+
+      if (fs.existsSync(rootFile)) {
+        return originalLoad.call(
+          this,
+          rootFile,
+          parent,
+          isMain
+        );
+      }
+
+      if (fs.existsSync(utilsFile)) {
+        return originalLoad.call(
+          this,
+          utilsFile,
+          parent,
+          isMain
+        );
+      }
     }
+
+    /*
+     * ./logger
+     * ./database
+     * ./adminStore
+     * etc.
+     *
+     * 루트에 없으면 utils에서 찾습니다.
+     */
+    if (
+      request.startsWith('./') &&
+      !request.startsWith('../') &&
+      UTILS.has(request.slice(2))
+    ) {
+      const name = request.slice(2);
+
+      const rootFile = path.join(
+        ROOT,
+        `${name}.js`
+      );
+
+      const utilsFile = path.join(
+        ROOT,
+        'utils',
+        `${name}.js`
+      );
+
+      if (fs.existsSync(rootFile)) {
+        return originalLoad.call(
+          this,
+          rootFile,
+          parent,
+          isMain
+        );
+      }
+
+      if (fs.existsSync(utilsFile)) {
+        return originalLoad.call(
+          this,
+          utilsFile,
+          parent,
+          isMain
+        );
+      }
+    }
+  } catch (error) {
+    console.error(
+      '⚠️ 모듈 경로 처리 오류:',
+      error
+    );
   }
 
   return originalLoad.call(
@@ -92,9 +139,9 @@ Module._load = function (request, parent, isMain) {
   );
 };
 
-// ==========================================
-// 환경변수
-// ==========================================
+/* =========================================================
+   환경변수
+   ========================================================= */
 
 const TOKEN = process.env.DISCORD_TOKEN;
 
@@ -106,9 +153,9 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// ==========================================
-// Discord Client
-// ==========================================
+/* =========================================================
+   Discord Client
+   ========================================================= */
 
 const client = new Client({
   intents: [
@@ -125,72 +172,75 @@ const client = new Client({
   ],
 });
 
-// ==========================================
-// Collection
-// ==========================================
+/* =========================================================
+   Collections
+   ========================================================= */
 
 client.commands = new Collection();
 client.prefixCommands = new Collection();
 
-// ==========================================
-// 명령어 / 이벤트 로드
-// ==========================================
-
-const ROOT = __dirname;
-
-const files = fs
-  .readdirSync(ROOT)
-  .filter((file) => file.endsWith('.js'));
+/* =========================================================
+   로드 카운터
+   ========================================================= */
 
 let loadedEvents = 0;
 let loadedSlashCommands = 0;
 let loadedPrefixCommands = 0;
 
-for (const file of files) {
-  if (
-    file === 'index.js' ||
-    file === 'deploy-commands.js'
-  ) {
-    continue;
-  }
+/* =========================================================
+   이벤트 이름
+   ========================================================= */
 
-  const fullPath = path.join(ROOT, file);
+const EVENT_NAMES = new Set([
+  'ready',
+  'messageCreate',
+  'interactionCreate',
+  'voiceStateUpdate',
+  'guildMemberAdd',
+  'guildMemberRemove',
+  'guildMemberUpdate',
+]);
 
+/* =========================================================
+   모듈 하나 로드
+   ========================================================= */
+
+function loadModule(filePath, displayName) {
   try {
     delete require.cache[
-      require.resolve(fullPath)
+      require.resolve(filePath)
     ];
 
-    const mod = require(fullPath);
+    const mod = require(filePath);
 
     if (!mod) {
-      continue;
+      return;
     }
 
-    // ========================================
-    // 이벤트 모듈
-    // ========================================
+    /* -----------------------------------------------------
+       이벤트
+       ----------------------------------------------------- */
 
     if (
       typeof mod.name === 'string' &&
       typeof mod.execute === 'function' &&
-      [
-        'ready',
-        'messageCreate',
-        'interactionCreate',
-        'voiceStateUpdate',
-        'guildMemberAdd',
-        'guildMemberRemove',
-        'guildMemberUpdate',
-      ].includes(mod.name)
+      EVENT_NAMES.has(mod.name)
     ) {
+      /*
+       * index.js에서 직접 ready를 등록하므로
+       * ready 이벤트는 중복 등록하지 않습니다.
+       */
+      if (mod.name === 'ready') {
+        return;
+      }
+
       const handler = (...args) => {
         Promise.resolve(
           mod.execute(...args)
-        ).catch((err) => {
+        ).catch((error) => {
           console.error(
-            `❌ 이벤트 오류 [${mod.name}]`,
-            err
+            `❌ 이벤트 실행 오류 [${mod.name}]`,
+            error
           );
         });
       };
@@ -210,83 +260,160 @@ for (const file of files) {
       loadedEvents++;
 
       console.log(
-        `📡 이벤트 로드: ${mod.name} <- ${file}`
+        `📡 이벤트 로드: ${mod.name} <- ${displayName}`
       );
 
-      continue;
+      return;
     }
 
-    // ========================================
-    // Slash 명령어
-    // ========================================
+    /* -----------------------------------------------------
+       Slash Command
+       ----------------------------------------------------- */
 
     if (
       mod.data &&
       typeof mod.execute === 'function' &&
-      mod.data.name
+      typeof mod.data.name === 'string'
     ) {
+      const commandName =
+        mod.data.name;
+
       client.commands.set(
-        mod.data.name,
+        commandName,
         mod
       );
 
       loadedSlashCommands++;
 
       console.log(
-        `⚡ 슬래시 명령어 로드: /${mod.data.name}`
+        `⚡ 슬래시 명령어 로드: /${commandName}`
       );
 
-      continue;
+      return;
     }
 
-    // ========================================
-    // Prefix 명령어
-    // ========================================
+    /* -----------------------------------------------------
+       Prefix Command
+       ----------------------------------------------------- */
 
     if (
-      typeof mod.execute === 'function'
+      typeof mod.execute === 'function' &&
+      typeof mod.name === 'string' &&
+      !mod.data
     ) {
-      const commandName =
-        typeof mod.name === 'string'
-          ? mod.name
-          : typeof mod.command === 'string'
-            ? mod.command
-            : null;
-
-      if (
-        commandName &&
-        !mod.data
-      ) {
-        const cleanName =
-          commandName.replace(/^!/, '');
-
-        client.prefixCommands.set(
-          cleanName,
-          mod
-        );
-
-        loadedPrefixCommands++;
-
-        console.log(
-          `🔧 접두사 명령어 로드: !${cleanName}`
-        );
+      /*
+       * 이벤트 이름은 Prefix 명령어로 등록하지 않습니다.
+       */
+      if (EVENT_NAMES.has(mod.name)) {
+        return;
       }
+
+      const commandName =
+        mod.name.replace(/^!/, '');
+
+      /*
+       * 이름이 너무 이상한 일반 모듈은
+       * 명령어로 등록하지 않습니다.
+       */
+      if (!commandName) {
+        return;
+      }
+
+      client.prefixCommands.set(
+        commandName,
+        mod
+      );
+
+      loadedPrefixCommands++;
+
+      console.log(
+        `🔧 접두사 명령어 로드: !${commandName}`
+      );
     }
 
-  } catch (err) {
+  } catch (error) {
     console.error(
-      `⚠️ 모듈 로드 실패: ${file}`
+      `⚠️ 모듈 로드 실패: ${displayName}`
     );
 
     console.error(
-      err?.stack || err
+      error?.stack || error
     );
   }
 }
 
-// ==========================================
-// 상태 메시지
-// ==========================================
+/* =========================================================
+   루트 JS 파일 로드
+   ========================================================= */
+
+function loadRootModules() {
+  let files = [];
+
+  try {
+    files = fs
+      .readdirSync(ROOT)
+      .filter((file) =>
+        file.endsWith('.js')
+      );
+  } catch (error) {
+    console.error(
+      '❌ 루트 파일 목록을 읽을 수 없습니다.',
+      error
+    );
+
+    return;
+  }
+
+  /*
+   * index.js / deploy-commands.js 제외
+   */
+  for (const file of files) {
+    if (
+      file === 'index.js' ||
+      file === 'deploy-commands.js'
+    ) {
+      continue;
+    }
+
+    const fullPath =
+      path.join(ROOT, file);
+
+    loadModule(
+      fullPath,
+      file
+    );
+  }
+}
+
+/* =========================================================
+   시작
+   ========================================================= */
+
+console.log('');
+console.log(
+  '=========================================='
+);
+
+console.log(
+  '🚀 디톤 관리봇 시작 중...'
+);
+
+console.log(
+  '📦 모듈을 불러오는 중...'
+);
+
+console.log(
+  '=========================================='
+);
+
+console.log('');
+
+/* 모듈 로드 */
+loadRootModules();
+
+/* =========================================================
+   상태 메시지
+   ========================================================= */
 
 const statusMessages = [
   '패밀리 관리중',
@@ -297,15 +424,15 @@ const statusMessages = [
 
 let statusIndex = 0;
 
-// ==========================================
-// Ready
-// ==========================================
+/* =========================================================
+   Ready
+   ========================================================= */
 
 client.once(
   'ready',
-  () => {
-
+  async () => {
     console.log('');
+
     console.log(
       '=========================================='
     );
@@ -315,7 +442,7 @@ client.once(
     );
 
     console.log(
-      `🤖 봇 온라인`
+      '🤖 봇 온라인'
     );
 
     console.log(
@@ -340,23 +467,61 @@ client.once(
 
     console.log('');
 
-    // ========================================
-    // 상태 메시지 변경
-    // ========================================
+    /* -----------------------------------------------------
+       관리자 Store 초기화
+       ----------------------------------------------------- */
+
+    try {
+      const adminStorePath =
+        path.join(
+          ROOT,
+          'adminStore.js'
+        );
+
+      if (
+        fs.existsSync(
+          adminStorePath
+        )
+      ) {
+        const adminStore =
+          require(adminStorePath);
+
+        if (
+          typeof adminStore.seedOwners ===
+          'function'
+        ) {
+          adminStore.seedOwners();
+
+          console.log(
+            '👑 오너 정보 초기화 완료'
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        '⚠️ 오너 정보 초기화 실패:',
+        error
+      );
+    }
+
+    /* -----------------------------------------------------
+       상태 메시지
+       ----------------------------------------------------- */
 
     const updateStatus = () => {
-
       if (!client.user) {
         return;
       }
 
+      const currentStatus =
+        statusMessages[
+          statusIndex
+        ];
+
       client.user.setPresence({
         activities: [
           {
-            name: statusMessages[
-              statusIndex
-            ],
-
+            name: currentStatus,
             type: ActivityType.Playing,
           },
         ],
@@ -365,7 +530,7 @@ client.once(
       });
 
       console.log(
-        `🎮 상태 변경: ${statusMessages[statusIndex]}`
+        `🎮 상태 변경: ${currentStatus}`
       );
 
       statusIndex =
@@ -375,7 +540,9 @@ client.once(
 
     updateStatus();
 
-    // 30초마다 상태 변경
+    /*
+     * 30초마다 변경
+     */
     setInterval(
       updateStatus,
       30 * 1000
@@ -383,9 +550,9 @@ client.once(
   }
 );
 
-// ==========================================
-// Discord Client 오류
-// ==========================================
+/* =========================================================
+   Discord Client Error
+   ========================================================= */
 
 client.on(
   'error',
@@ -397,9 +564,9 @@ client.on(
   }
 );
 
-// ==========================================
-// Discord Warn
-// ==========================================
+/* =========================================================
+   Discord Warning
+   ========================================================= */
 
 client.on(
   'warn',
@@ -411,9 +578,9 @@ client.on(
   }
 );
 
-// ==========================================
-// 처리되지 않은 Promise 오류
-// ==========================================
+/* =========================================================
+   Unhandled Rejection
+   ========================================================= */
 
 process.on(
   'unhandledRejection',
@@ -425,9 +592,9 @@ process.on(
   }
 );
 
-// ==========================================
-// 처리되지 않은 예외
-// ==========================================
+/* =========================================================
+   Uncaught Exception
+   ========================================================= */
 
 process.on(
   'uncaughtException',
@@ -439,18 +606,9 @@ process.on(
   }
 );
 
-// ==========================================
-// 시작
-// ==========================================
-
-console.log('');
-console.log(
-  '🚀 디톤 관리봇 시작 중...'
-);
-
-console.log(
-  '📦 모듈을 불러오는 중...'
-);
+/* =========================================================
+   최종 시작 로그
+   ========================================================= */
 
 console.log(
   `⚡ 슬래시 명령어 ${loadedSlashCommands}개`
@@ -466,9 +624,13 @@ console.log(
 
 console.log('');
 
-// ==========================================
-// Discord 로그인
-// ==========================================
+/* =========================================================
+   Discord 로그인
+   ========================================================= */
+
+console.log(
+  '🔑 Discord 로그인 요청 중...'
+);
 
 client
   .login(TOKEN)
@@ -478,7 +640,6 @@ client
     );
   })
   .catch((error) => {
-
     console.error(
       '❌ 디스코드 로그인 실패'
     );
