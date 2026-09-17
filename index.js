@@ -13,7 +13,7 @@ const {
 } = require('discord.js');
 
 /* =========================================================
-   디톤 관리봇 - index.js
+   디톤 패밀리 관리봇 - index.js
    ========================================================= */
 
 const ROOT = __dirname;
@@ -32,16 +32,18 @@ const UTILS = new Set([
   'linkFilter',
   'wordFilter',
   'activityTracker',
+  'activityScheduler',
   'permissions',
   'adminStore',
   'tickets',
+  'formatters',
 ]);
 
 Module._load = function (request, parent, isMain) {
   try {
     /*
-     * ../utils/logger
-     * ./utils/logger
+     * ../utils/파일
+     * ./utils/파일
      */
     const utilsMatch = request.match(
       /^(?:\.\.\/|\.\/)utils\/([^/]+)$/
@@ -61,6 +63,9 @@ Module._load = function (request, parent, isMain) {
         `${name}.js`
       );
 
+      /*
+       * 루트에 있으면 루트 파일 사용
+       */
       if (fs.existsSync(rootFile)) {
         return originalLoad.call(
           this,
@@ -70,6 +75,9 @@ Module._load = function (request, parent, isMain) {
         );
       }
 
+      /*
+       * utils 폴더에 있으면 utils 파일 사용
+       */
       if (fs.existsSync(utilsFile)) {
         return originalLoad.call(
           this,
@@ -83,10 +91,8 @@ Module._load = function (request, parent, isMain) {
     /*
      * ./logger
      * ./database
-     * ./adminStore
-     * etc.
-     *
-     * 루트에 없으면 utils에서 찾습니다.
+     * ./activityTracker
+     * 기타 utils 파일
      */
     if (
       request.startsWith('./') &&
@@ -177,14 +183,17 @@ const client = new Client({
    ========================================================= */
 
 client.commands = new Collection();
+
 client.prefixCommands = new Collection();
 
 /* =========================================================
-   로드 카운터
+   카운터
    ========================================================= */
 
 let loadedEvents = 0;
+
 let loadedSlashCommands = 0;
+
 let loadedPrefixCommands = 0;
 
 /* =========================================================
@@ -202,7 +211,7 @@ const EVENT_NAMES = new Set([
 ]);
 
 /* =========================================================
-   모듈 하나 로드
+   모듈 로드
    ========================================================= */
 
 function loadModule(filePath, displayName) {
@@ -217,9 +226,9 @@ function loadModule(filePath, displayName) {
       return;
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        이벤트
-       ----------------------------------------------------- */
+       ===================================================== */
 
     if (
       typeof mod.name === 'string' &&
@@ -227,8 +236,7 @@ function loadModule(filePath, displayName) {
       EVENT_NAMES.has(mod.name)
     ) {
       /*
-       * index.js에서 직접 ready를 등록하므로
-       * ready 이벤트는 중복 등록하지 않습니다.
+       * ready는 아래에서 직접 등록
        */
       if (mod.name === 'ready') {
         return;
@@ -266,9 +274,9 @@ function loadModule(filePath, displayName) {
       return;
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        Slash Command
-       ----------------------------------------------------- */
+       ===================================================== */
 
     if (
       mod.data &&
@@ -292,9 +300,9 @@ function loadModule(filePath, displayName) {
       return;
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        Prefix Command
-       ----------------------------------------------------- */
+       ===================================================== */
 
     if (
       typeof mod.execute === 'function' &&
@@ -302,7 +310,7 @@ function loadModule(filePath, displayName) {
       !mod.data
     ) {
       /*
-       * 이벤트 이름은 Prefix 명령어로 등록하지 않습니다.
+       * 이벤트 이름은 명령어로 등록하지 않음
        */
       if (EVENT_NAMES.has(mod.name)) {
         return;
@@ -311,10 +319,6 @@ function loadModule(filePath, displayName) {
       const commandName =
         mod.name.replace(/^!/, '');
 
-      /*
-       * 이름이 너무 이상한 일반 모듈은
-       * 명령어로 등록하지 않습니다.
-       */
       if (!commandName) {
         return;
       }
@@ -343,7 +347,7 @@ function loadModule(filePath, displayName) {
 }
 
 /* =========================================================
-   루트 JS 파일 로드
+   루트 JS 파일 전체 로드
    ========================================================= */
 
 function loadRootModules() {
@@ -364,10 +368,10 @@ function loadRootModules() {
     return;
   }
 
-  /*
-   * index.js / deploy-commands.js 제외
-   */
   for (const file of files) {
+    /*
+     * index.js와 deploy-commands.js는 제외
+     */
     if (
       file === 'index.js' ||
       file === 'deploy-commands.js'
@@ -376,7 +380,10 @@ function loadRootModules() {
     }
 
     const fullPath =
-      path.join(ROOT, file);
+      path.join(
+        ROOT,
+        file
+      );
 
     loadModule(
       fullPath,
@@ -386,16 +393,17 @@ function loadRootModules() {
 }
 
 /* =========================================================
-   시작
+   시작 로그
    ========================================================= */
 
 console.log('');
+
 console.log(
   '=========================================='
 );
 
 console.log(
-  '🚀 디톤 관리봇 시작 중...'
+  '🚀 디톤 패밀리 관리봇 시작 중...'
 );
 
 console.log(
@@ -408,29 +416,20 @@ console.log(
 
 console.log('');
 
-/* 모듈 로드 */
+/* =========================================================
+   모듈 로드
+   ========================================================= */
+
 loadRootModules();
 
 /* =========================================================
-   상태 메시지
-   ========================================================= */
-
-const statusMessages = [
-  '패밀리 관리중',
-  '디톤님 도와주는중',
-  '방송중',
-  '듣는중',
-];
-
-let statusIndex = 0;
-
-/* =========================================================
-   Ready
+   봇 Ready
    ========================================================= */
 
 client.once(
   'ready',
   async () => {
+
     console.log('');
 
     console.log(
@@ -467,9 +466,9 @@ client.once(
 
     console.log('');
 
-    /* -----------------------------------------------------
-       관리자 Store 초기화
-       ----------------------------------------------------- */
+    /* =====================================================
+       관리자 Store
+       ===================================================== */
 
     try {
       const adminStorePath =
@@ -504,11 +503,21 @@ client.once(
       );
     }
 
-    /* -----------------------------------------------------
+    /* =====================================================
        상태 메시지
-       ----------------------------------------------------- */
+       ===================================================== */
+
+    const statusMessages = [
+      '패밀리 관리중',
+      '디톤님 도와주는중',
+      '방송중',
+      '듣는중',
+    ];
+
+    let statusIndex = 0;
 
     const updateStatus = () => {
+
       if (!client.user) {
         return;
       }
@@ -538,14 +547,23 @@ client.once(
         statusMessages.length;
     };
 
+    /*
+     * 로그인 직후 상태 표시
+     */
     updateStatus();
 
     /*
-     * 30초마다 변경
+     * 30초마다 상태 변경
      */
+    const intervalMs =
+      Number(
+        process.env.STATUS_INTERVAL ||
+        30000
+      );
+
     setInterval(
       updateStatus,
-      30 * 1000
+      intervalMs
     );
   }
 );
@@ -607,7 +625,7 @@ process.on(
 );
 
 /* =========================================================
-   최종 시작 로그
+   최종 로그
    ========================================================= */
 
 console.log(
@@ -640,6 +658,7 @@ client
     );
   })
   .catch((error) => {
+
     console.error(
       '❌ 디스코드 로그인 실패'
     );
