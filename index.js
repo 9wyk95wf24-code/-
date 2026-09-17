@@ -11,12 +11,20 @@ const {
   ActivityType
 } = require('discord.js');
 
+/* =====================================
+   환경변수
+===================================== */
+
 const TOKEN = process.env.DISCORD_TOKEN;
 
 if (!TOKEN) {
-  console.error('❌ DISCORD_TOKEN이 없습니다.');
+  console.error('❌ DISCORD_TOKEN 환경변수가 없습니다.');
   process.exit(1);
 }
+
+/* =====================================
+   CLIENT
+===================================== */
 
 const client = new Client({
   intents: [
@@ -34,12 +42,24 @@ const client = new Client({
   ]
 });
 
+/* =====================================
+   COLLECTION
+===================================== */
+
 client.commands = new Collection();
 client.prefixCommands = new Collection();
 
+/* =====================================
+   경로
+===================================== */
+
 const ROOT = __dirname;
 
-const discordEvents = new Set([
+/* =====================================
+   Discord 이벤트 파일 목록
+===================================== */
+
+const DISCORD_EVENTS = new Set([
   'ready',
   'messageCreate',
   'messageDelete',
@@ -64,130 +84,176 @@ const discordEvents = new Set([
   'shardResume'
 ]);
 
-function getRootJsFiles() {
+/* =====================================
+   루트 JS 파일 가져오기
+===================================== */
+
+function getRootFiles() {
   return fs
     .readdirSync(ROOT)
-    .filter(file =>
-      file.endsWith('.js') &&
-      file !== 'index.js' &&
-      file !== 'deploy-commands.js'
-    );
+    .filter(file => {
+      return (
+        file.endsWith('.js') &&
+        file !== 'index.js' &&
+        file !== 'deploy-commands.js'
+      );
+    });
 }
 
 /* =====================================
-   명령어 자동 로드
+   모듈 안전 로드
 ===================================== */
 
-for (const file of getRootJsFiles()) {
-
+function loadModule(file) {
   try {
-
-    const fullPath = path.join(ROOT, file);
-    const mod = require(fullPath);
-
-    /* 슬래시 명령어 */
-
-    if (
-      mod &&
-      mod.data &&
-      typeof mod.execute === 'function' &&
-      mod.data.name
-    ) {
-
-      client.commands.set(
-        mod.data.name,
-        mod
-      );
-
-      console.log(
-        `✅ 슬래시 명령어 로드: /${mod.data.name}`
-      );
-    }
-
-    /* 접두사 명령어 */
-
-    if (
-      mod &&
-      typeof mod.name === 'string' &&
-      typeof mod.execute === 'function' &&
-      !discordEvents.has(mod.name)
-    ) {
-
-      client.prefixCommands.set(
-        mod.name.toLowerCase(),
-        mod
-      );
-
-      console.log(
-        `✅ 접두사 명령어 로드: !${mod.name}`
-      );
-    }
-
+    return require(path.join(ROOT, file));
   } catch (error) {
+    console.error(
+      `⚠️ ${file} 로드 실패: ${error.message}`
+    );
+
+    return null;
+  }
+}
+
+/* =====================================
+   명령어 로드
+===================================== */
+
+const rootFiles = getRootFiles();
+
+for (const file of rootFiles) {
+  const mod = loadModule(file);
+
+  if (!mod) {
+    continue;
+  }
+
+  /* -----------------------------
+     슬래시 명령어
+  ----------------------------- */
+
+  if (
+    mod.data &&
+    typeof mod.execute === 'function' &&
+    mod.data.name
+  ) {
+    client.commands.set(
+      mod.data.name,
+      mod
+    );
 
     console.log(
-      `⚠️ ${file} 로드 실패: ${error.message}`
+      `✅ 슬래시 명령어 로드: /${mod.data.name}`
+    );
+
+    continue;
+  }
+
+  /* -----------------------------
+     이벤트 파일은 제외
+  ----------------------------- */
+
+  if (
+    typeof mod.name === 'string' &&
+    DISCORD_EVENTS.has(mod.name)
+  ) {
+    continue;
+  }
+
+  /* -----------------------------
+     접두사 명령어
+  ----------------------------- */
+
+  if (
+    typeof mod.name === 'string' &&
+    typeof mod.execute === 'function'
+  ) {
+    const commandName =
+      mod.name.toLowerCase();
+
+    client.prefixCommands.set(
+      commandName,
+      mod
+    );
+
+    console.log(
+      `✅ 접두사 명령어 로드: !${mod.name}`
     );
   }
 }
 
+console.log('');
 console.log(
-  `📦 슬래시 명령어 ${client.commands.size}개 로드`
+  `📦 슬래시 명령어: ${client.commands.size}개`
 );
 
 console.log(
-  `📦 접두사 명령어 ${client.prefixCommands.size}개 로드`
+  `📦 접두사 명령어: ${client.prefixCommands.size}개`
 );
 
 /* =====================================
-   이벤트 자동 로드
+   이벤트 로드
 ===================================== */
 
-for (const file of getRootJsFiles()) {
+for (const file of rootFiles) {
+  const mod = loadModule(file);
+
+  if (!mod) {
+    continue;
+  }
+
+  if (
+    typeof mod.name !== 'string' ||
+    typeof mod.execute !== 'function'
+  ) {
+    continue;
+  }
+
+  if (!DISCORD_EVENTS.has(mod.name)) {
+    continue;
+  }
+
+  /*
+    index.js에서 직접 처리하는 이벤트
+  */
+
+  if (
+    mod.name === 'ready' ||
+    mod.name === 'messageCreate' ||
+    mod.name === 'interactionCreate'
+  ) {
+    continue;
+  }
 
   try {
-
-    const fullPath = path.join(ROOT, file);
-    const mod = require(fullPath);
-
-    if (
-      !mod ||
-      typeof mod.name !== 'string' ||
-      typeof mod.execute !== 'function'
-    ) {
-      continue;
-    }
-
-    if (!discordEvents.has(mod.name)) {
-      continue;
-    }
-
-    /*
-      아래 이벤트는 index.js에서 직접 처리
-    */
-
-    if (
-      mod.name === 'messageCreate' ||
-      mod.name === 'interactionCreate' ||
-      mod.name === 'ready'
-    ) {
-      continue;
-    }
-
     if (mod.once) {
-
       client.once(
         mod.name,
-        (...args) =>
-          mod.execute(...args, client)
+        (...args) => {
+          try {
+            mod.execute(...args, client);
+          } catch (error) {
+            console.error(
+              `❌ 이벤트 ${mod.name} 오류:`,
+              error
+            );
+          }
+        }
       );
-
     } else {
-
       client.on(
         mod.name,
-        (...args) =>
-          mod.execute(...args, client)
+        (...args) => {
+          try {
+            mod.execute(...args, client);
+          } catch (error) {
+            console.error(
+              `❌ 이벤트 ${mod.name} 오류:`,
+              error
+            );
+          }
+        }
       );
     }
 
@@ -196,9 +262,9 @@ for (const file of getRootJsFiles()) {
     );
 
   } catch (error) {
-
-    console.log(
-      `⚠️ 이벤트 ${file} 로드 실패: ${error.message}`
+    console.error(
+      `❌ 이벤트 등록 실패: ${mod.name}`,
+      error
     );
   }
 }
@@ -211,14 +277,20 @@ client.once('ready', async () => {
 
   console.log('');
   console.log('====================================');
-  console.log(`🤖 로그인 완료: ${client.user.tag}`);
-  console.log(`🟢 상태: ONLINE`);
-  console.log(`🏠 서버 수: ${client.guilds.cache.size}`);
+  console.log('🤖 디톤 패밀리 관리봇');
+  console.log('====================================');
   console.log(
-    `⚡ 슬래시 명령어: ${client.commands.size}개`
+    `👤 로그인: ${client.user.tag}`
+  );
+  console.log('🟢 상태: ONLINE');
+  console.log(
+    `🏠 서버: ${client.guilds.cache.size}개`
   );
   console.log(
-    `⌨️ 접두사 명령어: ${client.prefixCommands.size}개`
+    `⚡ 슬래시: ${client.commands.size}개`
+  );
+  console.log(
+    `⌨️ 접두사: ${client.prefixCommands.size}개`
   );
   console.log('====================================');
 
@@ -228,9 +300,16 @@ client.once('ready', async () => {
 
   const slashCommands = [
     ...client.commands.values()
-  ].map(command =>
-    command.data.toJSON()
-  );
+  ]
+    .filter(command => {
+      return (
+        command.data &&
+        typeof command.data.toJSON === 'function'
+      );
+    })
+    .map(command => {
+      return command.data.toJSON();
+    });
 
   for (const guild of client.guilds.cache.values()) {
 
@@ -241,20 +320,20 @@ client.once('ready', async () => {
       );
 
       console.log(
-        `✅ 슬래시 명령어 등록: ${guild.name}`
+        `✅ 명령어 등록 완료: ${guild.name}`
       );
 
     } catch (error) {
 
       console.error(
-        `❌ ${guild.name} 등록 실패:`,
+        `❌ ${guild.name} 명령어 등록 실패:`,
         error.message
       );
     }
   }
 
   /* ===================================
-     상태메시지 순환
+     상태메시지
   =================================== */
 
   const statuses = [
@@ -266,7 +345,7 @@ client.once('ready', async () => {
 
   let statusIndex = 0;
 
-  const updateStatus = () => {
+  function updateStatus() {
 
     if (!client.user) {
       return;
@@ -279,14 +358,10 @@ client.once('ready', async () => {
       }
     );
 
-    statusIndex++;
-
-    if (
-      statusIndex >= statuses.length
-    ) {
-      statusIndex = 0;
-    }
-  };
+    statusIndex =
+      (statusIndex + 1) %
+      statuses.length;
+  }
 
   updateStatus();
 
@@ -297,7 +372,7 @@ client.once('ready', async () => {
 });
 
 /* =====================================
-   SLASH COMMAND
+   슬래시 명령어
 ===================================== */
 
 client.on(
@@ -315,11 +390,13 @@ client.on(
 
     if (!command) {
 
-      return interaction.reply({
+      await interaction.reply({
         content:
           '❌ 등록되지 않은 명령어입니다.',
         ephemeral: true
       }).catch(() => {});
+
+      return;
     }
 
     try {
@@ -336,8 +413,11 @@ client.on(
         error
       );
 
-      const content =
-        '❌ 명령어 실행 중 오류가 발생했습니다.';
+      const reply = {
+        content:
+          '❌ 명령어 실행 중 오류가 발생했습니다.',
+        ephemeral: true
+      };
 
       if (
         interaction.replied ||
@@ -345,18 +425,13 @@ client.on(
       ) {
 
         await interaction
-          .editReply({
-            content
-          })
+          .editReply(reply)
           .catch(() => {});
 
       } else {
 
         await interaction
-          .reply({
-            content,
-            ephemeral: true
-          })
+          .reply(reply)
           .catch(() => {});
       }
     }
@@ -364,7 +439,7 @@ client.on(
 );
 
 /* =====================================
-   PREFIX COMMAND
+   메시지 / 접두사 명령어
 ===================================== */
 
 client.on(
@@ -378,6 +453,117 @@ client.on(
     const content =
       message.content.trim();
 
+    /* =================================
+       !봇상태
+    ================================= */
+
+    if (
+      content === '!봇상태'
+    ) {
+
+      const online =
+        client.isReady();
+
+      const status =
+        online
+          ? '🟢 온라인'
+          : '🔴 오프라인';
+
+      const guildCount =
+        client.guilds.cache.size;
+
+      const totalMembers =
+        client.guilds.cache.reduce(
+          (total, guild) => {
+            return total +
+              (guild.memberCount || 0);
+          },
+          0
+        );
+
+      const currentGuild =
+        message.guild;
+
+      let currentServerInfo =
+        'DM에서 실행됨';
+
+      if (currentGuild) {
+
+        currentServerInfo = [
+          `🏠 서버명: **${currentGuild.name}**`,
+          `🆔 서버 ID: **${currentGuild.id}**`,
+          `👥 서버 인원: **${currentGuild.memberCount}명**`,
+          `📅 서버 생성일: <t:${Math.floor(currentGuild.createdTimestamp / 1000)}:D>`
+        ].join('\n');
+      }
+
+      const guildList =
+        client.guilds.cache
+          .map(guild => {
+            return `• **${guild.name}** — ${guild.memberCount}명`;
+          })
+          .join('\n');
+
+      const uptime =
+        Math.floor(
+          (client.uptime || 0) / 1000
+        );
+
+      const days =
+        Math.floor(
+          uptime / 86400
+        );
+
+      const hours =
+        Math.floor(
+          (uptime % 86400) / 3600
+        );
+
+      const minutes =
+        Math.floor(
+          (uptime % 3600) / 60
+        );
+
+      const seconds =
+        uptime % 60;
+
+      const uptimeText =
+        `${days}일 ${hours}시간 ${minutes}분 ${seconds}초`;
+
+      const text = [
+        '🤖 **디톤 패밀리 관리봇 상태**',
+        '',
+        `📡 봇 상태: **${status}**`,
+        `🏓 Discord Ping: **${client.ws.ping}ms**`,
+        `⏱️ 가동시간: **${uptimeText}**`,
+        '',
+        '📊 **전체 서버 정보**',
+        `🏠 연결된 서버: **${guildCount}개**`,
+        `👥 전체 서버 인원: **${totalMembers}명**`,
+        `⚡ 슬래시 명령어: **${client.commands.size}개**`,
+        `⌨️ 접두사 명령어: **${client.prefixCommands.size}개**`,
+        '',
+        '📌 **현재 서버 정보**',
+        currentServerInfo,
+        '',
+        '🌐 **연결된 서버 목록**',
+        guildList ||
+          '연결된 서버가 없습니다.',
+        '',
+        `🕐 확인시간: <t:${Math.floor(Date.now() / 1000)}:F>`
+      ].join('\n');
+
+      await message
+        .reply(text)
+        .catch(() => {});
+
+      return;
+    }
+
+    /* =================================
+       접두사 명령어
+    ================================= */
+
     if (!content.startsWith('!')) {
       return;
     }
@@ -389,17 +575,10 @@ client.on(
         .split(/\s+/);
 
     const commandName =
-      (parts.shift() || '').toLowerCase();
+      (parts.shift() || '')
+        .toLowerCase();
 
     if (!commandName) {
-      return;
-    }
-
-    /*
-      봇상태는 아래 전용 처리
-    */
-
-    if (commandName === '봇상태') {
       return;
     }
 
@@ -437,135 +616,6 @@ client.on(
 );
 
 /* =====================================
-   !봇상태
-   실시간 온라인 + 서버 정보
-===================================== */
-
-client.on(
-  'messageCreate',
-  async message => {
-
-    if (message.author.bot) {
-      return;
-    }
-
-    if (
-      message.content.trim() !==
-      '!봇상태'
-    ) {
-      return;
-    }
-
-    /*
-      이 코드가 실행됐다는 것 자체가
-      봇이 Discord에 연결되어 있다는 의미
-    */
-
-    const online =
-      client.isReady();
-
-    const status =
-      online
-        ? '🟢 온라인'
-        : '🔴 오프라인';
-
-    /* 서버 정보 */
-
-    const guildCount =
-      client.guilds.cache.size;
-
-    const totalMembers =
-      client.guilds.cache.reduce(
-        (total, guild) =>
-          total + (guild.memberCount || 0),
-        0
-      );
-
-    /* 현재 서버 */
-
-    const currentGuild =
-      message.guild;
-
-    let currentServerInfo =
-      'DM에서 실행됨';
-
-    if (currentGuild) {
-
-      currentServerInfo = [
-        `🏠 서버명: **${currentGuild.name}**`,
-        `🆔 서버 ID: **${currentGuild.id}**`,
-        `👥 서버 인원: **${currentGuild.memberCount}명**`,
-        `📅 서버 생성일: <t:${Math.floor(currentGuild.createdTimestamp / 1000)}:D>`
-      ].join('\n');
-    }
-
-    /* 전체 서버 목록 */
-
-    const guildList =
-      client.guilds.cache
-        .map(
-          guild =>
-            `• **${guild.name}** — ${guild.memberCount}명`
-        )
-        .join('\n');
-
-    /* 가동시간 */
-
-    const uptime =
-      Math.floor(
-        (client.uptime || 0) / 1000
-      );
-
-    const days =
-      Math.floor(
-        uptime / 86400
-      );
-
-    const hours =
-      Math.floor(
-        (uptime % 86400) / 3600
-      );
-
-    const minutes =
-      Math.floor(
-        (uptime % 3600) / 60
-      );
-
-    const seconds =
-      uptime % 60;
-
-    const uptimeText =
-      `${days}일 ${hours}시간 ${minutes}분 ${seconds}초`;
-
-    const text = [
-      '🤖 **디톤 패밀리 관리봇 상태**',
-      '',
-      `📡 봇 상태: **${status}**`,
-      `🏓 Discord Ping: **${client.ws.ping}ms**`,
-      `⏱️ 가동시간: **${uptimeText}**`,
-      '',
-      '📊 **전체 서버 정보**',
-      `🏠 연결된 서버: **${guildCount}개**`,
-      `👥 전체 서버 인원: **${totalMembers}명**`,
-      `⚡ 슬래시 명령어: **${client.commands.size}개**`,
-      `⌨️ 접두사 명령어: **${client.prefixCommands.size}개**`,
-      '',
-      '📌 **현재 서버 정보**',
-      currentServerInfo,
-      '',
-      '🌐 **연결된 서버 목록**',
-      guildList || '연결된 서버가 없습니다.',
-      '',
-      `🕐 확인시간: <t:${Math.floor(Date.now() / 1000)}:F>`
-    ].join('\n');
-
-    await message
-      .reply(text)
-      .catch(() => {});
-  }
-);
-
-/* =====================================
    Discord 오류
 ===================================== */
 
@@ -576,6 +626,17 @@ client.on(
     console.error(
       '❌ Discord Client Error:',
       error
+    );
+  }
+);
+
+client.on(
+  'warn',
+  warning => {
+
+    console.warn(
+      '⚠️ Discord Warning:',
+      warning
     );
   }
 );
